@@ -1,0 +1,176 @@
+
+setwd("C:/Users/Jerry/Desktop/the_taylor_project/lipsticks/")
+library(colouR)
+library(ggplot2)
+
+# These shades were determined from various Internet articles
+shade <- c("Ruby Woo", "Morocco", "Dragon Girl", "Elson 4", "Always Red", "Kyoto Red", 
+           "Eadie Scarlet", "Blood Lust", "Flame", "Red to Go")
+
+# These swatches of shades were copied from various Internet stores
+df_lipsticks <- data.frame(shade,
+        file = c("Mac_Ruby_Woo.png", "NARS_morocco.png", "NARS_Dragon_Girl.png", "PatMcGrath_Elson4.png", 
+           "Sephora_always_red.png", "Tatcha_Kyoto_Red.png", "Gucci_Velvet_Eadie_Scarlet.png", 
+           "PatMcGrath_Blood_Lust.png", "TomFord_flame.png", "Armani_red_to_go.png" ))
+
+# These files were created by copying various photos of TS, cropping rectangle of lips, then
+# using https://www.remove.bg/ to remove backgrounds  
+file = c("ts1_lips-removebg-preview.png", "ts2_lips-removebg-preview.png",
+       "ts3_lips-removebg-preview.png", "ts4_lips-removebg-preview.png","ts5_lips-removebg-preview.png")
+name = c("TS photo 1", "TS photo 2", "TS photo 3", "TS photo 4" ,"TS photo 5")
+df_photos <- data.frame(file, name)
+
+############
+
+# p10 for ten lipstick shades, but some only have 1 color
+p10 <- function(image, name) {
+  # Get primary color
+  primary_color <- colouR::getTopCol(image, n = 1, avgCols = FALSE, exclude = TRUE)
+  
+  top10 <- tryCatch(
+    {
+      colouR::getTopCol(image, n = 10, avgCols = FALSE, exclude = TRUE)
+    },
+    error = function(e) {
+      primary_color
+    }
+  )
+  
+  if (nrow(top10) < 10) {
+    top10 <- rbind(top10, top10[rep(1, 10 - nrow(top10)),])
+  }
+  
+  plot <- ggplot(top10, aes(x = hex, y = freq, fill = hex)) +
+    geom_bar(stat = 'identity') +
+    scale_fill_manual(values = top10$hex) +
+    labs(title = paste(name, "Top 10 colors by frequency")) +
+    xlab("HEX color code") + ylab("Frequency") +
+    theme(
+      legend.position = "none",
+      plot.title = element_text(size = 15, face = "bold"),
+      axis.title = element_text(size = 15, face = "bold"),
+      axis.text.x = element_text(angle = 45, hjust = 1, size = 12, face = "bold")
+    )
+  print(plot)
+  return(top10)
+}   # close p function
+
+shade_dataframe <- data.frame(matrix(ncol = 10, nrow = 0))
+
+for (i in 1:10) {
+  result <- p10(df_lipsticks$file[i], df_lipsticks$shade[i])
+  
+  # Repeat the first color if there are fewer than 10 colors
+  if (nrow(result) < 10) {
+    result <- rbind(result, result[rep(1, 10 - nrow(result)),])
+  }
+  
+  shade_dataframe <- rbind(shade_dataframe, t(result$hex))
+}
+
+colnames(shade_dataframe) <- paste0("Color", 1:10)
+print(shade_dataframe)
+
+#############
+
+p5 <- function(image, name) {
+   top10 <- colouR::getTopCol(image, n = 10, avgCols = FALSE, exclude = TRUE)
+   return(top10)
+}
+
+df_ts_colors <- data.frame()
+for(i in 1:nrow(df_photos)){
+   top10_colors <- p5(df_photos$file[i], df_photos$name[i])
+   top10_colors <- top10_colors$hex
+   df_ts_colors <- if(i == 1) {
+     df_ts_colors <- top10_colors
+    } else {rbind(df_ts_colors, top10_colors)
+   }
+}
+colnames(df_ts_colors) <- c("color1","color2","color3","color4","color5",
+                         "color6","color7","color8","color9","color10")
+rownames(df_ts_colors) <- df_photos$name
+df_ts_colors <- t(df_ts_colors)
+print(df_ts_colors)
+
+# begin total RGB distance of a TS photo to centroid of lipstick shade
+
+# sample 3d plot
+library(scatterplot3d)
+m <- data.frame(
+     x = c(174,134),
+     y = c(31,26),
+     z = c(61,35))
+
+s3d <- scatterplot3d(m$x, m$y, m$z, pch = 19, color = "blue", 
+    xlim = c(100, 200), ylim = c(0, 50), zlim = c(0, 100), 
+    xlab = expression(bold("R-axis")), ylab = expression(bold("G-axis")), zlab = expression(bold("B-axis")), 
+    main = "Plot of two colors in RGB space", cex.main = 2)
+
+s3d$points3d(m$x, m$y, m$z, type = "l", lty = 1, lwd = 2, col = "red")
+
+# Use 'text' for adding labels with bold font
+text(s3d$xyz.convert(m$x, m$y, m$z), labels = paste0("(", m$x, ",", m$y, ",", m$z, ")"), 
+     pos = 3, cex = 2, col = "#00008B", font = 2)
+
+A <- shade_dataframe$Color1
+B <- shade_dataframe$Color2
+C <- shade_dataframe$Color3
+D <- shade_dataframe$Color4
+E <- shade_dataframe$Color5
+F <- shade_dataframe$Color6
+G <- shade_dataframe$Color7
+H <- shade_dataframe$Color8
+I <- shade_dataframe$Color9
+J <- shade_dataframe$Color10
+
+
+hex_to_rgb <- function(hex) {
+  rgb <- t(col2rgb(hex))
+  return(data.frame(r=rgb[1,], g=rgb[2,], b=rgb[3,]))
+}
+
+# Function to calculate Euclidean distance between two RGB vectors
+euclidean_distance <- function(rgb1, rgb2) {
+  sqrt(sum((rgb1 - rgb2)^2))
+}
+
+# Function to calculate centroid of a vector of hex colors
+calculate_centroid <- function(hex_colors) {
+  rgb_values <- hex_to_rgb(hex_colors)
+  centroid <- colMeans(rgb_values)
+  return(centroid)
+}
+
+# Calculate centroids of shades, e.g., centroid_A <- calculate_centroid(A)
+  centroids <- lapply(list(A, B, C, D, E, F, G, H, I, J), calculate_centroid)
+
+for (j in 1:nrow(df_photos)) {
+   x <- df_ts_colors[,j]
+   centroid_x <- calculate_centroid(x)
+# Calculate total distance of x to each centroid
+   total_distance_to_centroid <- function(x, centroid) {
+     x_rgb <- hex_to_rgb(x)
+     total <- 0
+     for (i in 1:nrow(x_rgb)) {
+       total <- total + euclidean_distance(x_rgb[i, ], centroid)
+     }
+     return(total)
+   }
+
+  distances <- sapply(centroids, total_distance_to_centroid, x = x)
+  w <- which(distances == min(distances))
+  most_similar <- shade[w]
+  cat("The lipstick most similar to", df_photos$name[j], "is:", most_similar, "\n")
+ }   #  end for loop on photos
+  
+# END
+
+
+
+
+
+
+
+
+

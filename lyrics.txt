@@ -1,0 +1,249 @@
+library(taylor)
+library(dplyr)
+library(tidyverse)
+library(tidytext)
+data(stop_words)
+library(textclean)
+library(SnowballC) # For stemming
+library(textstem) # For lemmatization
+
+######################################
+# functions, preliminaries
+
+# function to print more rows
+more_rows <- function(filename){
+  options(tibble.print_max = nrow(filename), tibble.print_min = nrow(filename))
+  print(filename)
+}
+
+# function to fix informal speech (colloquialisms); also contractions, punctuation, lower case
+colloq <- function(df) {
+  pattern <- "ahh|Ah-uh|ahah|eh|haah|haha|iiii|Oh|oh|Oh-oh|oh-oh|ooh-oh|oohah|Uh|Uh-oh|uh-oh-oh-oh|ya|La-la-la|lala|la-la-la|la-la-la-la|Mm-mm|Mmm-mm|mm-mm|mm-mm-mm-mm|Ha-ha-ha"
+  df <- df %>%
+    mutate(lyric = str_remove_all(lyric, paste0("\\b(", pattern, ")\\b"))) %>%
+    mutate(lyric = str_replace_all(lyric, 
+               c("ain't" = "is not", 
+                 "Beggin'" = "begging", "beggin'" = "begging", "birth right" = "birthright", "blood-soaked" = "blood soaked",
+                 "'bout" = "about", "burnin'" = "burning", "callin'" = "calling", "'Cause" = "because", "'cause" = "because", "Cept" = "Except", "cursee" = "cure",
+                 "convers" = "conversation","crashin'" = "crashing", "doin'" = "doing", "driftin'" = "drifting", "dyin'" = "dying", "'em" = "them", "feelin'" = "feeling", "flyin'" = "flying","feverishlying" = "feverishly", "'fore" = "before", "'Fore" = "before", "foreyesgn" = "foreign",
+                 "everythi-i-ing" = "everything","fuckin'"="fuck", "gettin'" = "getting", "gonna" = "going to", "gotta" = "got to", "happ'nin'" = "happening", "haven't" = "have not", "Holdin'" = "holding", "hero's" = "hero",
+                 "Hopin'" = "hoping", "hopin'" = "hoping","I'ma" = "I am going to", "kinda"="kind of", "king's" = "king", "keepin" = "keeping", "Laughin'" = "laughing", "lookin'" = "looking", "losin" = "losing", "losingg" = "losing", "lovin'" = "loving", "lucki" = "lucky", "no-one" = "no one", "Nothin'" = "nothing", "nothin'" = "nothing","one-hand" = "one hand",
+                 "mornin'" = "morning", "'nother"="another", "nothin'" = "nothing", "pickin'" = "picking", "post-mortem" = "postmortem", "prayin'" = "praying", "Prayin'" = "praying", "pretti" = "pretty", "ridin'" = "riding", "Sneakin'" = "sneaking",
+                 "outta" = "out of", "'round" = "around", "self-implode" = "self implode", "shoulda" = "should have", "standin'" = "standing", "summer's" = "summer is", "There's" = "there is", "Thinkin'" = "thinking", 
+                 "thankin'" = "thanking", "thinkin'" = "thinking", "'Til" = "until", "'til" = "until", "tryin'" = "trying", "tryna" = "trying to", "Tryna" = "trying to","twin-sized" = "twin sized", 
+                 "waitin'" = "waiting", "white-knuckle" = "white knuckle",
+                 "wanna" = "want to", "weepin'" = "weeping", "whatcha" = "what are you", "Where's" = "where is", "Why'd" = "why did",
+                 "wide-eyed" = "wide eyed", "wonderin'" = "wondering", "Wonderin'" = "wondering"))) %>%
+    mutate(lyric = map_chr(lyric, clean_text))
+  
+  return(df)
+}
+
+
+custom_stop_words <- bind_rows(stop_words, 
+           tibble(word = c("ah", "dadadada", "ha", "haha", "hey", "hi", "huh", "la", "MMM", "mmm", "mmmm", "mm", "na", "oh", "okay","OK", "ok", "ooh", 
+           "uh", "whoa", "woah", "yeah"), lexicon = "custom"))
+
+
+# Function to clean text  (included in colloq function)
+clean_text <- function(text) { 
+  text %>% 
+    replace_contraction() %>% 
+    str_remove_all("[[:punct:]]") %>% 
+    str_to_lower()
+}
+
+replacements_df <- read.csv("C:/Users/Jerry/Desktop/the_taylor_project/lem_replacements_df.csv", header = TRUE)
+
+# Function to stem and lemmatize
+pro <- function(words_df) {
+  words_df <- words_df %>% filter(!is.na(word))
+  processed_words <- words_df %>%
+    mutate(stemmed_word = wordStem(word),
+           lemmatized_word = lemmatize_words(stemmed_word)) %>%
+    filter(lemmatized_word != "") %>%  # Filter out empty strings
+    left_join(replacements_df, by = c("lemmatized_word" = "stemmed_word")) %>%
+    mutate(lemmatized_word = ifelse(is.na(lemmatized_word.y), lemmatized_word, lemmatized_word.y)) %>%
+    select(-lemmatized_word.y)  # Remove the extra column created during the join
+}
+
+nrc_sentiments <- get_sentiments("nrc") %>%
+  filter(word != "count" & word != "heel" & word != "truck" & word != "wear" & word != "word")
+
+common_theme <- theme(
+  legend.position="NULL",
+  plot.title = element_text(size = 15, face = "bold"),
+  plot.subtitle = element_text(size = 12.5, face = "bold"),
+  axis.title = element_text(size = 15, face = "bold"),
+  axis.text = element_text(size = 15, face = "bold"),
+  legend.title = element_text(size = 15, face = "bold"),
+  legend.text = element_text(size = 15, face = "bold"))
+
+sentiment_colors <- c("anger" = "red", "anticipation" = "green", "disgust" = "brown",
+                      "fear" = "purple", "joy" = "yellow", "negative" = "gray", "positive" = "lightblue",
+                      "sadness" = "blue", "surprise" = "pink", "trust" = "turquoise")
+
+emotion_plot <- function(sentiment_summary, song, r){
+  ggplot(sentiment_summary, aes(x = sentiment, y = word_count, fill = sentiment)) + 
+    geom_col(color = "black") + 
+    scale_fill_manual(values = sentiment_colors) +
+    labs(title = paste(song, "# words by emotion"),
+         subtitle = paste("emotional words / all (processed) words =", r), 
+         x = "Emotion", 
+         y = "Number of Words") + 
+    common_theme + 
+    theme(axis.text.x = element_text(angle = 45, hjust=1))
+}
+
+lemmatized_colors <- c("red", "blue", "green", "orange", 
+                       "purple", "cyan", "magenta", "yellow", "brown", "pink")
+
+word_plot <- function(word_summary, song, title){
+  ggplot(word_summary, aes(x = lemmatized_word, y = total_count, fill = lemmatized_word)) + 
+    geom_col(color = "black") + 
+    scale_fill_manual(values = lemmatized_colors) +
+    labs(title = paste(song, title),
+         x = "", 
+         y = "Frequency") + 
+    common_theme +
+    theme(axis.text.x = element_text(angle = 45, hjust=1))
+}
+
+all_albums <- c("Taylor Swift", "Fearless (Taylor's Version)", "Speak Now (Taylor's Version)", "Red (Taylor's Version)", "1989 (Taylor's Version)",
+                "reputation", "Lover", "folklore", "evermore",  "Midnights", "THE TORTURED POETS DEPARTMENT")
+number_of_tracks <- c(15, 26, 22, 30, 22, 15, 18, 17, 17, 19, 31)
+original_release_year <- c(2006, 2008, 2010, 2012, 2014, 2017, 2019, 2020, 2020, 2022, 2024)
+# The years are original release years, i.e., not "Taylor's version" years
+
+#######################################
+
+# Find song by word in title - could be lower case!
+x <- "ricochet"
+df1 <- taylor_album_songs %>%
+   select(album_name, track_name) %>%
+   filter(grepl(x, track_name))
+n <- df1$album_name[1]
+a <- which(all_albums == n)
+a
+
+# Find track number
+x <- df1$track_name[1]
+t <- taylor_album_songs %>%
+  filter(album_name == n) %>%
+  select(album_name, track_number, track_name) %>%
+  filter(track_name == x) %>%
+  select(track_number) %>%
+  pull() %>% as.numeric()
+t
+
+Or instead, choose album a & track t   eg: Style: a=11, t=3
+# a <- 8
+# t <- 5
+
+
+
+
+
+#######################################
+song <- taylor_album_songs %>% 
+  # filter(album_name == all_albums[a] ) %>%  # all songs in an album
+  filter(album_name == all_albums[a] & track_number == t) %>% 
+  pull(track_name[1])   # NOTE the track_name is always 1
+if (length(song) == 0) print("No such track number/song") else print(song)
+song <- gsub("\\(Taylor's Version\\)|\\[Taylor's Version\\]", '', song)
+album <- all_albums[a]
+
+df <- taylor_album_songs %>%
+  filter(album_name == all_albums[a] & track_number == t) %>%
+  select(lyrics) %>%
+  unnest(lyrics) %>%
+  select(line, lyric)
+more_rows(df)   # Examine for colloquialisms; add to function colloq
+
+df <- colloq(df)
+more_rows(df)
+
+words_df <- df %>%
+  unnest_tokens(word, lyric) %>%
+  anti_join(custom_stop_words, by = "word")
+more_rows(words_df)
+
+processed_words <- pro(words_df) 
+more_rows(processed_words) # Examine for words incorrectly lemmatized; add to function pro
+
+processed_words_count <- processed_words %>%
+  select(lemmatized_word) %>%
+  group_by(lemmatized_word) %>%
+  summarize(total_count = n()) %>%
+  arrange(desc(total_count)) %>%
+  head(10)
+more_rows(processed_words_count) 
+
+total_processed_words <- nrow(processed_words) 
+
+sentiment_analysis <- processed_words %>%
+  inner_join(nrc_sentiments, by = c("lemmatized_word" = "word"),
+             relationship = "many-to-many") %>%
+  count(lemmatized_word, sentiment, sort = TRUE)
+
+distinct_sentiment_words <- sentiment_analysis %>% 
+  pull(lemmatized_word) %>%
+  n_distinct()   
+
+total_sentiment_words <- sentiment_analysis %>%
+  select(lemmatized_word, n) %>%
+  distinct() %>%
+  group_by(lemmatized_word) %>%
+  summarize(total_count = sum(n)) %>%
+  summarize(total_count = sum(total_count)) %>%
+  pull(total_count)   
+
+r <- round(total_sentiment_words / total_processed_words, 3)
+cat("emotional words = ", total_sentiment_words, ", total processed words = ", total_processed_words, ", ratio = ", r )
+
+sentiment_summary <- sentiment_analysis %>%
+  group_by(sentiment) %>%
+  summarise(word_count = sum(n))
+sentiment_summary
+
+word_summary <- sentiment_analysis %>%
+  select(lemmatized_word, n) %>%
+  distinct() %>%
+  group_by(lemmatized_word) %>%
+  summarize(total_count = sum(n)) %>%
+  arrange(desc(total_count)) %>%
+  head(10)
+word_summary   # check for word with unusual sentiment (truck = trust?); delete from NRC 
+
+word_plot(processed_words_count, song, 
+          title="10 most frequent processed words")
+word_plot(word_summary, song, 
+          title = "10 most frequent emotional words")
+emotion_plot(sentiment_summary, song, r)
+
+# End individual song analysis;  for all songs combined, in df <- taylor_album_songs %>%
+# delete filter(album_name == all_albums[a] & track_number == t) %>%, and also song <- ""
+
+dirty_words <- processed_words %>%
+  select(lemmatized_word) %>%
+  filter(, lemmatized_word=="fuck" | lemmatized_word=="shit" | lemmatized_word=="slut" | lemmatized_word=="bitch") %>%
+  group_by(lemmatized_word) %>%
+  mutate(lemmatized_word = str_replace(lemmatized_word, "fuck", "f**k")) %>%
+  mutate(lemmatized_word = str_replace(lemmatized_word, "shit", "sh*t")) %>%
+  mutate(lemmatized_word = str_replace(lemmatized_word, "slut", "sl*t")) %>%
+  mutate(lemmatized_word = str_replace(lemmatized_word, "bitch", "b*tch")) %>%
+  summarize(total_count = n())
+dirty_words   # limited to these four; there are others :)
+
+dirty_colors <- c("#FF0000","#000000","#800080","#FFA500")
+ggplot(dirty_words, aes(x = lemmatized_word, y = total_count, fill = lemmatized_word)) + 
+  geom_col(color = "black") + 
+  scale_fill_manual(values = dirty_colors) +
+  labs(title = "TS # of R-rated Words",
+       x = "", 
+       y = "Number of Words") + 
+  common_theme 
+
+# END
+
+
